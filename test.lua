@@ -73,7 +73,14 @@ C [[
 1
 2
 3
-]] { 1,2,3 }
+nil
+true
+false
+on,
+off,
+yes,
+no,
+]] { 1,2,3,nil,true,false,true,false,true,false }
 
 C [[
 "hello\nworld",

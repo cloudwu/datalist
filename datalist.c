@@ -262,6 +262,8 @@ push_token_string(lua_State *L, const char *ptr, size_t sz) {
 	return 0;
 }
 
+#define IS_KEYWORD(ptr, sz, str) (sizeof(str "") == sz+1 && (memcmp(ptr, str, sz) == 0))
+
 static void
 push_token(lua_State *L, struct lex_state *LS, struct token *t) {
 	const char * ptr = LS->source + t->from;
@@ -276,57 +278,74 @@ push_token(lua_State *L, struct lex_state *LS, struct token *t) {
 		}
 		return;
 	}
-	if (sz == 1) {
-		char c = *ptr;
-		if (c >= '0' && c <='9') {
-			lua_pushinteger(L, c - '0');
-		} else {
-			lua_pushlstring(L, ptr, 1);
-		}
-		return;
-	}
-	if (sz >=3 && ptr[0] == '0' && (ptr[1] == 'x' || ptr[1] == 'X')) {
-		// may be a hex integer
-		lua_Integer v = 0;
-		int hex = 1;
-		size_t i;
-		for (i=2;i<sz;i++) {
-			char c = ptr[i];
-			v = v * 16;
+
+	if (strchr("0123456789+-.", ptr[0])) {
+		if (sz == 1) {
+			char c = *ptr;
 			if (c >= '0' && c <='9') {
-				v += c - '0';
-			} else if (c >= 'a' && c <= 'f') {
-				v += c - 'a' + 10;
-			} else if (c >= 'A' && c <= 'F') {
-				v += c - 'A' + 10;
+				lua_pushinteger(L, c - '0');
 			} else {
-				hex = 0; 
-				break;
+				lua_pushlstring(L, ptr, 1);
+			}
+			return;
+		}
+
+		if (sz >=3 && ptr[0] == '0' && (ptr[1] == 'x' || ptr[1] == 'X')) {
+			// may be a hex integer
+			lua_Integer v = 0;
+			int hex = 1;
+			size_t i;
+			for (i=2;i<sz;i++) {
+				char c = ptr[i];
+				v = v * 16;
+				if (c >= '0' && c <='9') {
+					v += c - '0';
+				} else if (c >= 'a' && c <= 'f') {
+					v += c - 'a' + 10;
+				} else if (c >= 'A' && c <= 'F') {
+					v += c - 'A' + 10;
+				} else {
+					hex = 0;
+					break;
+				}
+			}
+			if (hex) {
+				lua_pushinteger(L, v);
+				return;
 			}
 		}
-		if (hex) {
+
+		// may be a number
+		// lua string always has \0 at the end, so strto* is safe
+		char *endptr = NULL;
+		lua_Integer v = strtoull(ptr, &endptr, 10);
+		if (endptr - ptr == sz) {
 			lua_pushinteger(L, v);
+			return;
+		}
+
+		endptr = NULL;
+		lua_Number f = strtod(ptr, &endptr);
+		if (endptr - ptr == sz) {
+			lua_pushnumber(L, f);
+			return;
+		}
+	}
+
+	if (t->type == TOKEN_ATOM) {
+		if (IS_KEYWORD(ptr, sz, "true") || IS_KEYWORD(ptr, sz, "yes") || IS_KEYWORD(ptr, sz, "on")) {
+			lua_pushboolean(L, 1);
+			return;
+		} else if (IS_KEYWORD(ptr, sz, "false") || IS_KEYWORD(ptr, sz, "no") || IS_KEYWORD(ptr, sz, "off")) {
+			lua_pushboolean(L, 0);
+			return;
+		} else if (IS_KEYWORD(ptr, sz, "nil")) {
+			lua_pushnil(L);
 			return;
 		}
 	}
 
 	lua_pushlstring(L, ptr, sz);
-	ptr = lua_tostring(L, -1);	// add \0
-
-	char *endptr = NULL;
-	lua_Integer v = strtoull(ptr, &endptr, 10);
-	if (endptr - ptr == sz) {
-		lua_pop(L ,1);
-		lua_pushinteger(L, v);
-		return;
-	}
-
-	endptr = NULL;
-	lua_Number f = strtod(ptr, &endptr);
-	if (endptr - ptr == sz) {
-		lua_pop(L, 1);
-		lua_pushnumber(L, f);
-	}
 }
 
 static inline void
