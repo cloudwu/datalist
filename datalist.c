@@ -11,7 +11,7 @@
 #define SHORT_STRING 1024
 
 enum token_type {
-	TOKEN_BRACKET,	// {} [] ()
+	TOKEN_BRACKET,	// {} []
 	TOKEN_SYMBOL,	// = :
 	TOKEN_LAYER,	// ## **
 	TOKEN_STRING,
@@ -47,7 +47,27 @@ skip_line_comment(struct lex_state *LS) {
 	return ptr;
 }
 
-static const char *
+static void
+parse_atom(struct lex_state *LS) {
+	static const char * separator = " \t\r\n,{}[]:=\"'";
+	static const char * dsep = "-#*";
+	const char * ptr = LS->source + LS->position;
+	const char * endptr = LS->source + LS->sz;
+	LS->t.type = TOKEN_ATOM;
+	LS->t.from = LS->position;
+	while (ptr < endptr) {
+		if (strchr(separator, *ptr) ||
+			(ptr[0] == ptr[1] && strchr(dsep, *ptr))) {
+			LS->t.to = ptr - LS->source;
+			LS->position = LS->t.to;
+			return;
+		}
+		++ptr;
+	}
+	LS->t.to = LS->sz;
+}
+
+static void
 parse_layer(struct lex_state *LS) {
 	const char * ptr = LS->source + LS->position;
 	const char * endptr = LS->source + LS->sz;
@@ -58,34 +78,16 @@ parse_layer(struct lex_state *LS) {
 			LS->t.to = ptr - LS->source;
 			if (LS->t.to - LS->t.from == 1) {
 				// Only one # or * is not a layer symbol.
-				LS->t.type = TOKEN_ATOM;
+				parse_atom(LS);
+				break;
 			} else {
 				LS->t.type = TOKEN_LAYER;
 			}
 			LS->position = LS->t.to;
-			return ptr;
+			break;
 		}
 		++ptr;
 	}
-	return ptr;
-}
-
-static void
-parse_atom(struct lex_state *LS) {
-	static const char * separator = " \t\r\n,#{}[]():=\"'";
-	const char * ptr = LS->source + LS->position;
-	const char * endptr = LS->source + LS->sz;
-	LS->t.type = TOKEN_ATOM;
-	LS->t.from = LS->position;
-	while (ptr < endptr) {
-		if (strchr(separator, *ptr)) {
-			LS->t.to = ptr - LS->source;
-			LS->position = LS->t.to;
-			return;
-		}
-		++ptr;
-	}
-	LS->t.to = LS->sz;
 }
 
 static int
@@ -139,8 +141,6 @@ next_token(struct lex_state *LS) {
 		case '}':
 		case '[':
 		case ']':
-		case '(':
-		case ')':
 			LS->t.type = TOKEN_BRACKET;
 			LS->t.from = LS->position;
 			LS->t.to = ++LS->position;
@@ -153,7 +153,7 @@ next_token(struct lex_state *LS) {
 			return 1;
 		case '#':
 		case '*':
-			ptr = parse_layer(LS);
+			parse_layer(LS);
 			return 1;
 		case '"':
 		case '\'':
@@ -179,6 +179,14 @@ invalid(lua_State *L, struct lex_state *LS, const char * err) {
 			++line;
 	}
 	return luaL_error(L, "Line %d : %s", line, err);
+}
+
+static inline int
+read_token(lua_State *L, struct lex_state *LS) {
+	if (!next_token(LS))
+		invalid(L, LS, "Invalid token");
+//	printf("token %.*s\n", (int)(LS->t.to-LS->t.from), LS->source + LS->t.from);
+	return LS->t.type;
 }
 
 static inline int
@@ -300,13 +308,19 @@ push_token(lua_State *L, struct lex_state *LS, struct token *t) {
 	const char * ptr = LS->source + t->from;
 	size_t sz = t->to - t->from;
 
-	if (t->type == TOKEN_STRING) {
+	switch(t->type) {
+	case TOKEN_STRING:
 		lua_pushlstring(L, ptr, sz);
 		return;
-	} else if (t->type == TOKEN_ESCAPESTRING) {
+	case TOKEN_ESCAPESTRING:
 		if (push_token_string(L, ptr, sz)) {
 			invalid(L, LS, "Invalid quote string");
 		}
+		return;
+	case TOKEN_ATOM:
+		break;
+	default:
+		invalid(L, LS, "Invalid atom");
 		return;
 	}
 
@@ -379,254 +393,315 @@ push_token(lua_State *L, struct lex_state *LS, struct token *t) {
 	lua_pushlstring(L, ptr, sz);
 }
 
-static inline void
-push_key(lua_State *L, struct lex_state *LS, struct token *key) {
-	lua_pushlstring(L, LS->source + key->from, key->to - key->from);
+static inline int
+layer_depth(struct lex_state *LS) {
+	return (LS->t.to - LS->t.from) - 1;
 }
 
-static void parse_list(lua_State *L, int index, struct lex_state *LS, int depth);
+static inline int
+token_symbol(struct lex_state *LS) {
+	return LS->source[LS->t.from];
+}
 
-// 0 : closed
-// 1 : continue
-static int
-push_value(lua_State *L, int index, struct lex_state *LS, int depth, int close_bracket) {
-	if (LS->t.type == TOKEN_EOF) {
-		if (close_bracket == 0)
-			return 0;
-		invalid(L, LS, "Not closed");
-	}
-	if (LS->t.type == TOKEN_BRACKET) {
-		char b = LS->source[LS->t.from]; 
-		switch (b) {
-		case ')':
-		case '}':
-		case ']':
-			if (b != close_bracket) {
-				invalid(L, LS, "Invalid closed bracket");
+static inline void
+push_key(lua_State *L, struct lex_state *LS, struct token *t) {
+	lua_pushlstring(L, LS->source + t->from, t->to - t->from);
+}
+
+static inline void
+pair_seti(lua_State *L, int n) {
+	// table k v
+	lua_seti(L, -3, n * 2 );
+	lua_seti(L, -2, n * 2 - 1);
+}
+
+static void
+new_table(lua_State *L, int layer) {
+	if (layer >= MAX_DEPTH)
+		luaL_error(L, "too many layers");
+	luaL_checkstack(L, 4, NULL);
+	lua_newtable(L);
+}
+
+static void push_value(lua_State *L, struct lex_state *LS, int layer);
+
+static inline int
+is_closed(struct lex_state *LS) {
+	switch (LS->t.type) {
+		case TOKEN_EOF :
+		case TOKEN_LAYER:
+			return 1;
+		case TOKEN_BRACKET:
+			switch (token_symbol(LS)) {
+			case '}':
+			case ']':
+				return 1;
 			}
+			break;
+		default:
+			break;
+	}
+	return 0;
+}
+
+static void
+parse_seq(lua_State *L, struct lex_state *LS, int layer, int n) {
+	for (;;) {
+		read_token(L, LS);
+		if (is_closed(LS))
+			return;
+		push_value(L, LS, layer);
+		lua_seti(L, -2, n);
+		++n;
+	}
+}
+
+static int
+read_first_kv(lua_State *L, struct lex_state *LS, int layer) {
+	struct token key = LS->t;
+	// It may be a key
+	if (read_token(L, LS) != TOKEN_SYMBOL) {
+		// It's a seq
+		push_token(L, LS, &key);
+		lua_seti(L, -2, 1);
+		if (is_closed(LS))
 			return 0;
+		push_value(L, LS, layer);
+		lua_seti(L, -2, 2);
+		parse_seq(L, LS, layer, 3);
+		return 0;
+	}
+	push_key(L, LS, &key);
+	read_token(L, LS);
+	push_value(L, LS, layer);
+	return 1;
+}
+
+static int
+try_kv(lua_State *L, struct lex_state *LS, int layer) {
+	switch (read_token(L, LS)) {
+	case TOKEN_EOF:
+	case TOKEN_LAYER:
+	case TOKEN_SYMBOL:
+		invalid(L, LS, "Invalid token in a list");
+		return 0;
+	case TOKEN_ATOM:
+		return read_first_kv(L, LS, layer);
+	default:
+		push_value(L, LS, layer);
+		lua_seti(L, -2, 1);
+		parse_seq(L, LS, layer, 2);
+		return 0;
+	}
+}
+
+static int
+parse_kv(lua_State *L, struct lex_state *LS, int layer) {
+	switch (read_token(L, LS)) {
+	case TOKEN_EOF:
+		invalid(L, LS, "Need close bracket");
+		return 0;
+	case TOKEN_BRACKET:
+		return 0;
+	case TOKEN_ATOM: {
+		push_key(L, LS, &LS->t);
+		if (read_token(L, LS) != TOKEN_SYMBOL) {
+			invalid(L, LS, "Need a key/value seprator");
+		}
+		read_token(L, LS);
+		push_value(L, LS, layer);
+		return 1;
+	}
+	default:
+		invalid(L, LS, "Invalid token in a list");
+		return 0;
+	}
+}
+
+static void
+check_close_bracket(lua_State *L, struct lex_state *LS, int bracket) {
+	if (LS->t.type != TOKEN_BRACKET)
+		invalid(L, LS, "Need close bracket");
+	int close_bracket = token_symbol(LS);
+	switch (bracket) {
+	case '{':
+		if (close_bracket == '}')
+			return;
+		break;
+	case '[':
+		if (close_bracket == ']')
+			return;
+		break;
+	default:
+		// never be here
+		break;
+	}
+	invalid(L, LS, "Invalid close bracket");
+}
+
+static void
+parse_map(lua_State *L, struct lex_state *LS, int layer) {
+	new_table(L, layer);
+	int bracket = token_symbol(LS);
+	if (try_kv(L, LS, layer)) {
+		lua_settable(L, -3);
+		while (parse_kv(L, LS, layer)) {
+			lua_settable(L, -3);
+		}
+	}
+	check_close_bracket(L, LS, bracket);
+}
+
+static void
+parse_list(lua_State *L, struct lex_state *LS, int layer) {
+	new_table(L, layer);
+	int bracket = token_symbol(LS);
+	if (try_kv(L, LS, layer)) {
+		int n = 1;
+		pair_seti(L, n);
+		while (parse_kv(L, LS, layer)) {
+			pair_seti(L, ++n);
+		}
+	}
+	check_close_bracket(L, LS, bracket);
+}
+
+static void
+push_value(lua_State *L, struct lex_state *LS, int layer) {
+	switch(LS->t.type) {
+	case TOKEN_BRACKET:
+		switch (token_symbol(LS)) {
 		case '{':
+			parse_map(L, LS, layer+1);
+			break;
 		case '[':
-		case '(':
-			lua_newtable(L);
-			parse_list(L, lua_gettop(L), LS, depth+1);
+			parse_list(L, LS, layer+1);
 			break;
 		default:
 			// never be here
 			invalid(L, LS, "Invalid bracket");
 			break;
 		}
-	} else if (LS->t.type == TOKEN_LAYER) {
+		break;
+	case TOKEN_LAYER:
 		invalid(L, LS, "Invalid layer symbol");
-	} else {
+		break;
+	case TOKEN_SYMBOL:
+		invalid(L, LS, "Invalid separtor symbol");
+		break;
+	default:
 		push_token(L, LS, &LS->t);
+		break;
+	}
+}
+
+static void parse_section_map(lua_State *L, struct lex_state *LS, int layer);
+static void parse_section_list(lua_State *L, struct lex_state *LS, int layer);
+
+static int
+read_subsection(lua_State *L, struct lex_state *LS, int layer) {
+	int sublayer = layer_depth(LS);
+	if (sublayer <= layer)
+		return 0;
+	if (sublayer != layer + 1) {
+		invalid(L, LS, "Invalid layer");
+	}
+	char layer_symbol = token_symbol(LS);	// * or #
+	if (read_token(L, LS) != TOKEN_ATOM) {
+		invalid(L, LS, "Need layer name");
+	}
+	push_key(L, LS, &LS->t);
+	switch (layer_symbol) {
+	case '#':
+		parse_section_map(L, LS, sublayer);
+		break;
+	case '*':
+		parse_section_list(L, LS, sublayer);
+		break;
+	default:
+		// never be here
+		invalid(L, LS, "Invalid layer symbol");
+		break;
 	}
 	return 1;
 }
 
-static void
-parse_flat(lua_State *L, int index, struct lex_state *LS, int depth) {
-	int tbl_idx = 1;
-	for (;;) {
-		if (!next_token(LS))
-			invalid(L, LS, "Invalid token");
-		if (!push_value(L, index, LS, depth, ')')) {
-			return;
-		}
-		lua_seti(L, index, tbl_idx);
-		++tbl_idx;
-	}
-}
-
-static void
-parse_seq(lua_State *L, int index, struct lex_state *LS, int depth, int n, int close_bracket) {
-	for (;;) {
-		if (!push_value(L, index, LS, depth, close_bracket))
-			return;
-		lua_seti(L, index, n);
-		++n;
-		if (!next_token(LS)) {
-			invalid(L, LS, "Invalid token");
-		}
-		if (LS->t.type == TOKEN_SYMBOL) {
-			invalid(L, LS, "Invalid symbol");
-		}
-	}
-}
-
-// 0 : read key
-// 1 : token
-// 2 : key token
 static int
-read_key(lua_State *L, struct lex_state *LS, struct token *key) {
-	if (!next_token(LS))
-		invalid(L, LS, "Invalid token");
-	if (LS->t.type != TOKEN_ATOM)
-		return 1;
-	*key = LS->t;
-	if (!next_token(LS))
-		invalid(L, LS, "Invalid token");
-	if (LS->t.type != TOKEN_SYMBOL) {
-		return 2;
-	}
-	return 0;
-}
-
-static void
-parse_map(lua_State *L, int index, struct lex_state *LS, int depth, int pair) {
-	struct token key;
-	int n = read_key(L, LS, &key);
-	if (n > 0) {
-		// not map
-		if (n == 2) {
-			push_token(L, LS, &key);
-			lua_seti(L, index, 1);
-		}
-		parse_seq(L, index, LS, depth, n, pair ? ']' : '}');
-		return;
-	}
-
-	if (pair) {
-		// key/value pair
-		int tbl_idx = 1;
-		for (;;) {
-			lua_createtable(L, 2, 0);
-			push_key(L, LS, &key);
-			lua_seti(L, -2, 1);
-			if (!next_token(LS))
-				invalid(L, LS, "Invalid token");
-			if (!push_value(L, index, LS, depth, ']')) {
-				invalid(L, LS, "No value");
-			}
-			lua_seti(L, -2, 2);
-			lua_seti(L, index, tbl_idx);
-			++tbl_idx;
-			if (read_key(L, LS, &key)) {
-				if (LS->source[LS->t.from] == ']')
-					break;
-				invalid(L, LS, "Need key");
-			}
-		}
-	} else {
-		for (;;) {
-			push_key(L, LS, &key);
-			if (!next_token(LS))
-				invalid(L, LS, "Invalid token");
-			if (!push_value(L, index, LS, depth, '}')) {
-				invalid(L, LS, "No value");
-			}
-			lua_settable(L, index);
-			if (read_key(L, LS, &key)) {
-				if (LS->source[LS->t.from] == '}')
-					break;
-				invalid(L, LS, "Need key");
-			}
-		}
-	}
-}
-
-static void
-parse_list(lua_State *L, int index, struct lex_state *LS, int depth) {
-	if (depth >= MAX_DEPTH)
-		invalid(L, LS, "Too depth of brackets");
-	luaL_checkstack(L, 4, NULL);
-	assert(LS->t.type == TOKEN_BRACKET);
-	switch (LS->source[LS->t.from]) {
-	case '(':
-		parse_flat(L, index, LS, depth);
-		break;
-	case '[':
-		parse_map(L, index, LS, depth, 1);
-		break;
-	case '{':
-		parse_map(L, index, LS, depth, 0);
-		break;
-	default:
-		// never be here
-		invalid(L, LS, "Invalid bracket");
-		break;
-	}
-}
-
-// 0 : not a layer
-// 1+ : it's a map
-// -1- : it's a list
-static int
-read_layer(lua_State *L, struct lex_state *LS) {
-	if (!next_token(LS))
-		invalid(L, LS, "Invalid token");
-	if (LS->t.type != TOKEN_LAYER) {
+try_subsection_kv(lua_State *L, struct lex_state *LS, int layer) {
+	int t = read_token(L, LS);
+	if (t == TOKEN_SYMBOL) {
+		// one value
+		read_token(L, LS);
+		push_value(L, LS, layer);
+		read_token(L, LS);
 		return 0;
 	}
-	int layer = (LS->t.to - LS->t.from) - 1;
-	if (LS->source[LS->t.from] == '*')	// * or #
-		layer = -layer;
-	if (!next_token(LS))
-		invalid(L, LS, "Invalid token");
-	if (LS->t.type != TOKEN_ATOM) {
-		invalid(L, LS, "Layer key should be an atom");
+	new_table(L, layer);
+	switch (t) {
+	case TOKEN_EOF:
+		return 0;
+	case TOKEN_LAYER:
+		return read_subsection(L, LS, layer);
+	case TOKEN_ATOM:
+		if (read_first_kv(L, LS, layer)) {
+			// consume last token, because parse_section_kv don't read it
+			read_token(L, LS);
+			return 1;
+		} else {
+			return 0;
+		}
+	default:
+		push_value(L, LS, layer);
+		lua_seti(L, -2, 1);
+		parse_seq(L, LS, layer, 2);
+		return 0;
 	}
-	return layer;
+}
+
+static int
+parse_section_kv(lua_State *L, struct lex_state *LS, int layer) {
+	switch (LS->t.type) {
+	case TOKEN_EOF:
+		return 0;
+	case TOKEN_LAYER:
+		return read_subsection(L, LS, layer);
+	case TOKEN_ATOM: {
+		push_key(L, LS, &LS->t);
+		if (read_token(L, LS) != TOKEN_SYMBOL) {
+			invalid(L, LS, "Need a key/value seprator in a section");
+		}
+		read_token(L, LS);
+		push_value(L, LS, layer);
+		// consume value
+		read_token(L, LS);
+		return 1;
+	}
+	default:
+		invalid(L, LS, "Invalid sub section");
+		return 0;
+	}
 }
 
 static void
-parse_outer(lua_State *L, struct lex_state *LS, int index) {
-	int depth = 1;
-	struct token key;
-	int n = read_key(L, LS, &key);
-	if (n > 0) {
-		// not map
-		if (n == 2) {
-			push_token(L, LS, &key);
-			lua_seti(L, index, 1);
-		}
-		parse_seq(L, index, LS, depth, n, 0);
+parse_section_map(lua_State *L, struct lex_state *LS, int layer) {
+	if (!try_subsection_kv(L, LS, layer)) {
 		return;
 	}
-	char kv_sep = LS->source[LS->t.from];
-	if (kv_sep == ':') {
-		// pair
-		int tbl_idx = 1;
-		for (;;) {
-			lua_createtable(L, 2, 0);
-			push_key(L, LS, &key);
-			lua_seti(L, -2, 1);
-			if (!next_token(LS))
-				invalid(L, LS, "Invalid token");
-			if (!push_value(L, index, LS, depth, 0)) {
-				invalid(L, LS, "No value");
-			}
-			lua_seti(L, -2, 2);
-			lua_seti(L, index, tbl_idx);
-			++tbl_idx;
-			if (read_key(L, LS, &key)) {
-				if (LS->t.type == TOKEN_EOF)
-					break;
-				invalid(L, LS, "Need key");
-			}
-			if (LS->source[LS->t.from] != kv_sep) {
-				invalid(L, LS, "Invalid separator");
-			}
-		}
-	} else {
-		// map
-		for (;;) {
-			push_key(L, LS, &key);
-			if (!next_token(LS))
-				invalid(L, LS, "Invalid token");
-			if (!push_value(L, index, LS, depth, 0)) {
-				invalid(L, LS, "No value");
-			}
-			lua_settable(L, index);
-			if (read_key(L, LS, &key)) {
-				if (LS->t.type == TOKEN_EOF)
-					break;
-				invalid(L, LS, "Need key");
-			}
-			if (LS->source[LS->t.from] != kv_sep) {
-				invalid(L, LS, "Invalid separator");
-			}
-		}
+	lua_settable(L, -3);
+	while (parse_section_kv(L, LS, layer)) {
+		lua_settable(L, -3);
+	}
+}
+
+static void
+parse_section_list(lua_State *L, struct lex_state *LS, int layer) {
+	if (!try_subsection_kv(L, LS, layer)) {
+		return;
+	}
+	int n = 1;
+	pair_seti(L, n);
+	while (parse_section_kv(L, LS, layer)) {
+		pair_seti(L, ++n);
 	}
 }
 
@@ -651,16 +726,35 @@ ltoken(lua_State *L) {
 }
 */
 
+static void
+init_lex(lua_State *L, int index, struct lex_state *LS) {
+	LS->source = luaL_checklstring(L, 1, &LS->sz);
+	LS->position = 0;
+}
+
+static void
+check_eof(lua_State *L, struct lex_state *LS) {
+	if (LS->t.type != TOKEN_EOF) {
+		invalid(L, LS, "not end");
+	}
+}
+
 static int
 lparse(lua_State *L) {
 	struct lex_state LS;
-	LS.source = luaL_checklstring(L, 1, &LS.sz);
-	LS.position = 0;
+	init_lex(L, 1, &LS);
+	parse_section_map(L, &LS, 0);
+	check_eof(L, &LS);
 
-	lua_settop(L, 1);
-	lua_newtable(L);
+	return 1;
+}
 
-	parse_outer(L, &LS, 2);
+static int
+lparse_list(lua_State *L) {
+	struct lex_state LS;
+	init_lex(L, 1, &LS);
+	parse_section_list(L, &LS, 0);
+	check_eof(L, &LS);
 
 	return 1;
 }
@@ -670,6 +764,7 @@ luaopen_datalist(lua_State *L) {
 	luaL_checkversion(L);
 	luaL_Reg l[] = {
 		{ "parse", lparse },
+		{ "parse_list", lparse_list },
 		{ NULL, NULL },
 	};
 

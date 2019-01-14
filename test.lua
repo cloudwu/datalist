@@ -26,7 +26,8 @@ local function C(str)
 	return function (tbl)
 		local ok , err = pcall(compare_table , t, tbl)
 		if not ok then
-			print("Error:")
+			print("Error in :")
+			print(str)
 			for k,v in pairs(t) do
 				print(k,v, type(v))
 			end
@@ -57,8 +58,8 @@ C [[
 a:0xff
 b:1.2345
 ]] {
-	{ "a", 0xff },
-	{ "b", 1.2345 },
+	a = 0xff,
+	b = 1.2345,
 }
 
 C [[
@@ -103,23 +104,46 @@ a = { 1,2,3 }
 }
 
 C [[
-[ a = 1 ]
-{ b = 2 }
+[ a = 1, b = "hello" ]
+{ c = 2 }
 3
 ]] {
-	{ { "a" , 1 } },
-	{ b = 2 },
+	{ "a" , 1 , "b", "hello" },
+	{ c = 2 },
 	3,
+}
+
+
+
+C [[
+##XXX
+hello
+##YYY
+x = 1
+y = 2
+###YYY : 3	-- single value section
+z = 4
+**ZZZ
+a = 1
+b = 2
+***EMPTY
+***WWW
+array
+{ 1,2,3,4 }
+]] {
+	XXX = { "hello" },
+	YYY = {
+		x = 1,
+		y = 2,
+		YYY = 3,
+		z = 4,
+	},
+	ZZZ = { "a", 1, "b", 2, "EMPTY", {}, "WWW", {"array", {1,2,3,4}} },
 }
 
 
 F [[
 "a" : hello
-]]
-
-F [[
-a:1
-b=2
 ]]
 
 F [[
