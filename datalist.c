@@ -13,6 +13,7 @@
 enum token_type {
 	TOKEN_BRACKET,	// {} [] ()
 	TOKEN_SYMBOL,	// = :
+	TOKEN_LAYER,	// ## **
 	TOKEN_STRING,
 	TOKEN_ESCAPESTRING,
 	TOKEN_ATOM,
@@ -39,6 +40,29 @@ skip_line_comment(struct lex_state *LS) {
 	while (ptr < endptr) {
 		if (*ptr == '\r' || *ptr == '\n') {
 			LS->position = ptr - LS->source;
+			return ptr;
+		}
+		++ptr;
+	}
+	return ptr;
+}
+
+static const char *
+parse_layer(struct lex_state *LS) {
+	const char * ptr = LS->source + LS->position;
+	const char * endptr = LS->source + LS->sz;
+	char c = *ptr++;
+	while (ptr < endptr) {
+		if (*ptr != c) {
+			LS->t.from = LS->position;
+			LS->t.to = ptr - LS->source;
+			if (LS->t.to - LS->t.from == 1) {
+				// Only one # or * is not a layer symbol.
+				LS->t.type = TOKEN_ATOM;
+			} else {
+				LS->t.type = TOKEN_LAYER;
+			}
+			LS->position = LS->t.to;
 			return ptr;
 		}
 		++ptr;
@@ -98,10 +122,13 @@ next_token(struct lex_state *LS) {
 	const char * endptr = LS->source + LS->sz;
 	while (ptr < endptr) {
 		LS->position = ptr - LS->source;
-		switch (*ptr) {
-		case '#' : // comment
+		// source string has \0 at the end, ptr[1] is safe to access.
+		if (ptr[0] == '-' && ptr[1] == '-') {
+			// comment
 			ptr = skip_line_comment(LS);
-			break;
+			continue;
+		}
+		switch (*ptr) {
 		case ' ':
 		case '\t':
 		case '\r':
@@ -123,6 +150,10 @@ next_token(struct lex_state *LS) {
 			LS->t.type = TOKEN_SYMBOL;
 			LS->t.from = LS->position;
 			LS->t.to = ++LS->position;
+			return 1;
+		case '#':
+		case '*':
+			ptr = parse_layer(LS);
 			return 1;
 		case '"':
 		case '\'':
@@ -385,6 +416,8 @@ push_value(lua_State *L, int index, struct lex_state *LS, int depth, int close_b
 			invalid(L, LS, "Invalid bracket");
 			break;
 		}
+	} else if (LS->t.type == TOKEN_LAYER) {
+		invalid(L, LS, "Invalid layer symbol");
 	} else {
 		push_token(L, LS, &LS->t);
 	}
@@ -513,6 +546,27 @@ parse_list(lua_State *L, int index, struct lex_state *LS, int depth) {
 		invalid(L, LS, "Invalid bracket");
 		break;
 	}
+}
+
+// 0 : not a layer
+// 1+ : it's a map
+// -1- : it's a list
+static int
+read_layer(lua_State *L, struct lex_state *LS) {
+	if (!next_token(LS))
+		invalid(L, LS, "Invalid token");
+	if (LS->t.type != TOKEN_LAYER) {
+		return 0;
+	}
+	int layer = (LS->t.to - LS->t.from) - 1;
+	if (LS->source[LS->t.from] == '*')	// * or #
+		layer = -layer;
+	if (!next_token(LS))
+		invalid(L, LS, "Invalid token");
+	if (LS->t.type != TOKEN_ATOM) {
+		invalid(L, LS, "Layer key should be an atom");
+	}
+	return layer;
 }
 
 static void

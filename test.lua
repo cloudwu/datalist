@@ -16,7 +16,7 @@ local function compare_table(a,b)
 		assert(#k == #keys(b))
 		for k,v in pairs(a) do
 			local v2 = b[k]
-			compare_table(v, v2)			
+			compare_table(v, v2)
 		end
 	end
 end
@@ -42,7 +42,7 @@ end
 
 
 C [[
-a=1
+a=1	-- comment
 b=2.0
 c=0x3
 d=0x1p+0
