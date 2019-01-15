@@ -65,6 +65,7 @@ parse_atom(struct lex_state *LS) {
 		++ptr;
 	}
 	LS->t.to = LS->sz;
+	LS->position = LS->t.to;
 }
 
 static void
@@ -627,16 +628,7 @@ read_subsection(lua_State *L, struct lex_state *LS, int layer) {
 }
 
 static int
-try_subsection_kv(lua_State *L, struct lex_state *LS, int layer) {
-	int t = read_token(L, LS);
-	if (t == TOKEN_SYMBOL) {
-		// one value
-		read_token(L, LS);
-		push_value(L, LS, layer);
-		read_token(L, LS);
-		return 0;
-	}
-	new_table(L, layer);
+try_subsection_kv_(lua_State *L, struct lex_state *LS, int layer, int t) {
 	switch (t) {
 	case TOKEN_EOF:
 		return 0;
@@ -656,6 +648,20 @@ try_subsection_kv(lua_State *L, struct lex_state *LS, int layer) {
 		parse_seq(L, LS, layer, 2);
 		return 0;
 	}
+}
+
+static int
+try_subsection_kv(lua_State *L, struct lex_state *LS, int layer) {
+	int t = read_token(L, LS);
+	if (t == TOKEN_SYMBOL) {
+		// one value
+		read_token(L, LS);
+		push_value(L, LS, layer);
+		read_token(L, LS);
+		return 0;
+	}
+	new_table(L, layer);
+	return try_subsection_kv_(L, LS, layer, t);
 }
 
 static int
@@ -682,14 +688,28 @@ parse_section_kv(lua_State *L, struct lex_state *LS, int layer) {
 	}
 }
 
+static inline void
+parse_section_map_rest(lua_State *L, struct lex_state *LS, int layer) {
+	lua_settable(L, -3);
+	while (parse_section_kv(L, LS, layer)) {
+		lua_settable(L, -3);
+	}
+}
+
 static void
 parse_section_map(lua_State *L, struct lex_state *LS, int layer) {
 	if (!try_subsection_kv(L, LS, layer)) {
 		return;
 	}
-	lua_settable(L, -3);
+	parse_section_map_rest(L, LS, layer);
+}
+
+static void
+parse_section_list_rest(lua_State *L, struct lex_state *LS, int layer) {
+	int n = 1;
+	pair_seti(L, n);
 	while (parse_section_kv(L, LS, layer)) {
-		lua_settable(L, -3);
+		pair_seti(L, ++n);
 	}
 }
 
@@ -698,33 +718,26 @@ parse_section_list(lua_State *L, struct lex_state *LS, int layer) {
 	if (!try_subsection_kv(L, LS, layer)) {
 		return;
 	}
-	int n = 1;
-	pair_seti(L, n);
-	while (parse_section_kv(L, LS, layer)) {
-		pair_seti(L, ++n);
-	}
+	parse_section_list_rest(L, LS, layer);
 }
 
-/*
-static int
-ltoken(lua_State *L) {
-	struct lex_state LS;
-	LS.source = luaL_checklstring(L, 1, &LS.sz);
-	LS.position = 0;
-
-	lua_newtable(L);
-
-	int n = 1;
-	while(next_token(&LS)) {
-		if (LS.t.type == TOKEN_EOF) {
-			return 1;
-		}
-		lua_pushlstring(L, LS.source + LS.t.from, LS.t.to - LS.t.from);
-		lua_seti(L, -2, n++);
+static void
+parse_section_map_top(lua_State *L, struct lex_state *LS) {
+	// result table is create outside
+	if (!try_subsection_kv_(L, LS, 0, read_token(L, LS))) {
+		return;
 	}
-	return invalid(L, &LS, "Invalid token");
+	parse_section_map_rest(L, LS, 0);
 }
-*/
+
+static void
+parse_section_list_top(lua_State *L, struct lex_state *LS) {
+	// result table is create outside
+	if (!try_subsection_kv_(L, LS, 0, read_token(L, LS))) {
+		return;
+	}
+	parse_section_list_rest(L, LS, 0);
+}
 
 static void
 init_lex(lua_State *L, int index, struct lex_state *LS) {
@@ -743,7 +756,13 @@ static int
 lparse(lua_State *L) {
 	struct lex_state LS;
 	init_lex(L, 1, &LS);
-	parse_section_map(L, &LS, 0);
+	int t = lua_type(L, 2);
+	if (t == LUA_TTABLE || t == LUA_TUSERDATA) {
+		lua_settop(L, 2);
+		parse_section_map_top(L, &LS);
+	} else {
+		parse_section_map(L, &LS, 0);
+	}
 	check_eof(L, &LS);
 
 	return 1;
@@ -753,10 +772,35 @@ static int
 lparse_list(lua_State *L) {
 	struct lex_state LS;
 	init_lex(L, 1, &LS);
-	parse_section_list(L, &LS, 0);
+	int t = lua_type(L, 2);
+	if (t == LUA_TTABLE || t == LUA_TUSERDATA) {
+		lua_settop(L, 2);
+		parse_section_list_top(L, &LS);
+	} else {
+		parse_section_list(L, &LS, 0);
+	}
 	check_eof(L, &LS);
 
 	return 1;
+}
+
+static int
+ltoken(lua_State *L) {
+	struct lex_state LS;
+	LS.source = luaL_checklstring(L, 1, &LS.sz);
+	LS.position = 0;
+
+	lua_newtable(L);
+
+	int n = 1;
+	while(next_token(&LS)) {
+		if (LS.t.type == TOKEN_EOF) {
+			return 1;
+		}
+		lua_pushlstring(L, LS.source + LS.t.from, LS.t.to - LS.t.from);
+		lua_seti(L, -2, n++);
+	}
+	return invalid(L, &LS, "Invalid token");
 }
 
 LUAMOD_API int
@@ -765,6 +809,7 @@ luaopen_datalist(lua_State *L) {
 	luaL_Reg l[] = {
 		{ "parse", lparse },
 		{ "parse_list", lparse_list },
+		{ "token", ltoken },
 		{ NULL, NULL },
 	};
 

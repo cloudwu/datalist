@@ -41,6 +41,12 @@ local function F(str)
 	assert(not ok)
 end
 
+local mt = { __newindex = function (t,k,v)
+	rawset(t,k,v)
+	print("SET", k, v)
+end }
+
+datalist.parse("x=1,y=2", setmetatable({}, mt))
 
 C [[
 a=1	-- comment
