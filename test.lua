@@ -46,18 +46,26 @@ local mt = { __newindex = function (t,k,v)
 	print("SET", k, v)
 end }
 
-datalist.parse("x=1,y=2", setmetatable({}, mt))
+--datalist.parse("x=1,y=2", setmetatable({}, mt))
+
+C [[
+[]
+{{}},
+hello
+]] {{}, {{}}, "hello"}
 
 C [[
 a=1	-- comment
 b=2.0
 c=0x3
 d=0x1p+0
+e={}
 ]] {
 	a = 1,
 	b = 2.0,
 	c = 3,
 	d = 0x1p+0,
+	e = {},
 }
 
 C [[

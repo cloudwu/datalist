@@ -488,6 +488,16 @@ try_kv(lua_State *L, struct lex_state *LS, int layer) {
 		return 0;
 	case TOKEN_ATOM:
 		return read_first_kv(L, LS, layer);
+	case TOKEN_BRACKET:
+		switch (token_symbol(LS)) {
+			case '}':
+			case ']':
+				// It is a empty list
+				return 0;
+			default:
+				break;
+		}
+		// go through
 	default:
 		push_value(L, LS, layer);
 		lua_seti(L, -2, 1);
