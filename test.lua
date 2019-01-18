@@ -48,6 +48,16 @@ end }
 
 --datalist.parse("x=1,y=2", setmetatable({}, mt))
 
+C[[
+==
+x = 1
+==
+===
+y = 1
+===
+y = 2
+]] { {x = 1}, {{y = 1},{ y= 2}}}
+
 C [[
 []
 {{}},

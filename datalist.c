@@ -78,8 +78,13 @@ parse_layer(struct lex_state *LS) {
 			LS->t.from = LS->position;
 			LS->t.to = ptr - LS->source;
 			if (LS->t.to - LS->t.from == 1) {
-				// Only one # or * is not a layer symbol.
-				parse_atom(LS);
+				if (c == '=') {
+					LS->t.type = TOKEN_SYMBOL;
+					LS->position = LS->t.to;
+				} else {
+					// Only one # or * is not a layer symbol.
+					parse_atom(LS);
+				}
 				break;
 			} else {
 				LS->t.type = TOKEN_LAYER;
@@ -147,11 +152,11 @@ next_token(struct lex_state *LS) {
 			LS->t.to = ++LS->position;
 			return 1;
 		case ':':
-		case '=':
 			LS->t.type = TOKEN_SYMBOL;
 			LS->t.from = LS->position;
 			LS->t.to = ++LS->position;
 			return 1;
+		case '=':
 		case '#':
 		case '*':
 			parse_layer(LS);
@@ -637,12 +642,32 @@ read_subsection(lua_State *L, struct lex_state *LS, int layer) {
 	return 1;
 }
 
+static void
+parse_section_seq(lua_State *L, struct lex_state *LS, int layer) {
+	int n = 1;
+	while (LS->t.type == TOKEN_LAYER && token_symbol(LS) == '=') {
+		int sublayer = layer_depth(LS);
+		if (sublayer <= layer)
+			return;
+		if (sublayer != layer + 1) {
+			invalid(L, LS, "Invalid layer");
+		}
+		parse_section_map(L, LS, layer+1);
+		lua_seti(L, -2, n);
+		++n;
+	}
+}
+
 static int
 try_subsection_kv_(lua_State *L, struct lex_state *LS, int layer, int t) {
 	switch (t) {
 	case TOKEN_EOF:
 		return 0;
 	case TOKEN_LAYER:
+		if (token_symbol(LS) == '=') {
+			parse_section_seq(L, LS, layer);
+			return 0;
+		}
 		return read_subsection(L, LS, layer);
 	case TOKEN_ATOM:
 		if (read_first_kv(L, LS, layer)) {
