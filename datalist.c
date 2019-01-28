@@ -172,10 +172,15 @@ next_token(struct lex_state *LS) {
 			return 1;
 		case '-':
 			do ++ptr; while (ptr < endptr && *ptr == '-');
-			LS->n.type = TOKEN_LIST;
-			LS->n.from = LS->position;
-			LS->n.to = ptr - LS->source;
-			LS->position = LS->n.to;
+			if (ptr >= endptr || strchr(" \t\r\n", *ptr)) {
+				LS->n.type = TOKEN_LIST;
+				LS->n.from = LS->position;
+				LS->n.to = ptr - LS->source;
+				LS->position = LS->n.to;
+			} else {
+				// negative number
+				parse_atom(LS);
+			}
 			return 1;
 		case ':':
 		case '=':
@@ -472,6 +477,9 @@ parse_bracket_map(lua_State *L, struct lex_state *LS, int layer) {
 	int i = 1;
 	int aslist = LS->aslist;
 	do {
+		if (LS->c.type != TOKEN_ATOM) {
+			invalid(L, LS, "Invalid key");
+		}
 		push_key(L, LS);
 		if (read_token(L, LS) != TOKEN_MAP) {
 			invalid(L, LS, "Need a : or =");
@@ -632,6 +640,7 @@ next_list(lua_State *L, struct lex_state *LS, int ident) {
 				// next list
 				return 1;
 			default:
+				invalid(L, LS, "Invalid list");
 				break;
 			}
 		} else if (next_ident < ident) {
