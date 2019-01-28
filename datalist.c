@@ -542,7 +542,10 @@ next_item(lua_State *L, struct lex_state *LS, int ident) {
 	if (t == TOKEN_NEWLINE) {
 		int next_ident = token_length(&LS->c);
 		if (next_ident == ident) {
-			read_token(L, LS);	// consume indent
+			if (LS->n.type == TOKEN_LIST)
+				return 0;
+			read_token(L, LS);
+			return 1;
 		} else if (next_ident > ident) {
 			invalid(L, LS, "Invalid ident");
 		} else {
@@ -562,6 +565,8 @@ parse_section_map(lua_State *L, struct lex_state *LS, int ident, int layer) {
 	int i = 1;
 	int aslist = LS->aslist;
 	do {
+		if (LS->c.type != TOKEN_ATOM)
+			invalid(L, LS, "Invalid key");
 		push_key(L, LS);
 		if (read_token(L, LS) != TOKEN_MAP) {
 			invalid(L, LS, "Need a : or =");
@@ -572,8 +577,9 @@ parse_section_map(lua_State *L, struct lex_state *LS, int ident, int layer) {
 			break;
 		case TOKEN_NEWLINE: {
 			int next_ident = token_length(&LS->c);
-			if (next_ident <= ident)
+			if (next_ident <= ident) {
 				invalid(L, LS, "Invalid new section ident");
+			}
 			new_table(L, layer+1);
 			parse_section(L, LS, layer+1);
 			break;
@@ -597,15 +603,79 @@ static void
 parse_section_sequence(lua_State *L, struct lex_state *LS, int ident, int layer) {
 	int n = 1;
 	do {
-		int t = LS->c.type;
-		if (t == TOKEN_OPEN) {
+		switch (LS->c.type) {
+		case TOKEN_OPEN:
 			parse_bracket(L, LS, layer+1);
-		} else {
+			break;
+		case TOKEN_LIST:
+			// end of this section
+			return;
+		default:
 			push_token(L, LS, &LS->c);
 			read_token(L, LS);
+			break;
 		}
 		lua_seti(L, -2, n++);
 	} while(next_item(L, LS, ident));
+}
+
+static int
+next_list(lua_State *L, struct lex_state *LS, int ident) {
+	int t = LS->c.type;
+	if (t == TOKEN_NEWLINE) {
+		int next_ident = token_length(&LS->c);
+		if (next_ident == ident) {
+			switch (read_token(L, LS)) {
+			case TOKEN_EOF:
+				return 0;
+			case TOKEN_LIST:
+				// next list
+				return 1;
+			default:
+				break;
+			}
+		} else if (next_ident < ident) {
+			// end of sequence
+			return 0;
+		}
+	}
+	return 0;
+}
+
+static void
+parse_section_list(lua_State *L, struct lex_state *LS, int ident, int layer) {
+	int n = 1;
+	do {
+		switch (read_token(L, LS)) {
+		case TOKEN_OPEN:
+			parse_bracket(L, LS, layer+1);
+			break;
+		case TOKEN_NEWLINE: {
+			int next_ident = token_length(&LS->c);
+			if (next_ident >= ident) {
+				new_table(L, layer + 1);
+				if (LS->n.type != TOKEN_LIST || next_ident > ident) {
+					// not an empty list
+					parse_section(L, LS, layer + 1);
+				}
+			} else {
+				// end of list
+				return;
+			}
+			break;
+		}
+		case TOKEN_EOF:
+			// empty list
+			new_table(L, layer + 1);
+			lua_seti(L, -2, n);
+			return;
+		default:
+			push_token(L, LS, &LS->c);
+			read_token(L, LS);
+			break;
+		}
+		lua_seti(L, -2, n++);
+	} while(next_list(L, LS, ident));
 }
 
 static void
@@ -623,8 +693,10 @@ parse_section(lua_State *L, struct lex_state *LS, int layer) {
 	case TOKEN_STRING:
 	case TOKEN_ESCAPESTRING:
 	case TOKEN_OPEN:
-//	case TOKEN_LIST:
 		break;
+	case TOKEN_LIST:
+		parse_section_list(L, LS, ident, layer);
+		return;
 	default:
 		invalid(L, LS, "Invalid section");
 	}
