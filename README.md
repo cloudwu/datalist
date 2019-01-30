@@ -56,10 +56,11 @@ y : world
 1 2 3
 ]]
 
--- a = { { x = "hello", y : "world" }, { 1,2,3 } }
+-- a = { { x = "hello", y = "world" }, { 1,2,3 } }
 ```
 
-### Use indent or {} to describe multilayer structure
+### Use indent or {} to describe a multilayer structure
+
 ```lua
 a = datalist.parse [[
 x :
