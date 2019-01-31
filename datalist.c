@@ -641,6 +641,7 @@ parse_bracket_sequence(lua_State *L, struct lex_state *LS, int layer, int bracke
 		case TOKEN_OPEN:
 			// No tag in sequence
 			parse_bracket(L, LS, layer, NULL);
+			break;
 		default:
 			push_token(L, LS, &LS->c);
 			read_token(L, LS);
