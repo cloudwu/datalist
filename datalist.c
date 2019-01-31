@@ -676,19 +676,17 @@ parse_bracket_(lua_State *L, struct lex_state *LS, int layer, void *ref, int bra
 static void 
 parse_bracket(lua_State *L, struct lex_state *LS, int layer, void *ref) {
 	char bracket = token_symbol(LS);
-	if (ref) {
-		if (bracket == '[') {
-			invalid(L, LS, "[] can't has tag");
+	if (bracket == '[') {
+		if (ref) {
+			invalid(L, LS, "[] can't has a tag");
 		}
+		parse_bracket_(L, LS, layer, ref, ']');
+		lua_pushvalue(L, CONVERTER);
+		lua_insert(L, -2);
+		lua_call(L, 1, 1);
+	} else {
+		parse_bracket_(L, LS, layer, ref, '}');
 	}
-	if (bracket == '[')
-		bracket = ']';
-	else
-		bracket = '}';
-	parse_bracket_(L, LS, layer, ref, bracket);
-	lua_pushvalue(L, CONVERTER);
-	lua_insert(L, -2);
-	lua_call(L, 1, 1);
 }
 
 static int
