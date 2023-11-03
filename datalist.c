@@ -292,6 +292,7 @@ static int
 push_token_string(lua_State *L, const char *ptr, size_t sz) {
 	char tmp[SHORT_STRING];
 	char *buffer = tmp;
+	tmp[0] = '\0';
 	assert(sz > 0);
 	if (sz > SHORT_STRING) {
 		buffer = lua_newuserdatauv(L, sz, 0);
@@ -306,7 +307,9 @@ push_token_string(lua_State *L, const char *ptr, size_t sz) {
 			++i;
 			assert(i < sz);
 			char c = *ptr;
-			if (c >= '0' && c <= '9') {
+			if (c == '0') {
+				buffer[n] = '\0';
+			} else if (c >= '1' && c <= '9') {
 				// escape dec ascii
 				int dec = c - '0';
 				if (i+1 < sz) {
@@ -1009,7 +1012,16 @@ parse_section(lua_State *L, struct lex_state *LS, int layer) {
 
 static void
 init_lex(lua_State *L, int index, struct lex_state *LS) {
-	LS->source = luaL_checklstring(L, 1, &LS->sz);
+	switch (lua_type(L, 1)) {
+	case LUA_TUSERDATA:
+		LS->source = (const char*)lua_touserdata(L, 1);
+		LS->sz = lua_rawlen(L, 1);
+		break;
+	default:
+	case LUA_TSTRING:
+		LS->source = luaL_checklstring(L, 1, &LS->sz);
+		break;
+	}
 	LS->position = 0;
 	LS->newline = 1;
 	LS->aslist = 0;
