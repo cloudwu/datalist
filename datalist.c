@@ -1138,7 +1138,7 @@ valid_utf8(const char *str, size_t sz) {
 static void
 add_hex(luaL_Buffer *b, unsigned char c) {
 	char tmp[5];
-	snprintf(tmp, sizeof(tmp), "\\x%02x", c);
+	snprintf(tmp, sizeof(tmp), "\\x%02X", c);
 	luaL_addstring(b, tmp);
 }
 
