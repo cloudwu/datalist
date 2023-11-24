@@ -189,3 +189,20 @@ local v = datalist.parse([[ [1,2,3,4] ]], function(v)
 end)
 
 print(v[1])
+
+---- userdata
+
+local s = "Hello"
+local ptr, sz = datalist.string2ud(s)
+
+local function close(ptr, sz)
+	print("CLOSE", ptr, sz)
+end
+
+local function userdata()
+	return ptr, sz, close
+end
+
+local v = datalist.parse(userdata)
+
+print(v[1])
