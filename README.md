@@ -3,12 +3,12 @@
 A data format used by our game engine. It's just like a simpler version of yaml, or an enhanced version of json. 
 
 ### A simple dictionary
-key should be a string without space, use : or = to separate value.
+key should be a string without space, use : to separate value.
 
 ```lua
 a = datalist.parse [[
 x : 1 # comments ...
-y = 2 # = is equivalent to :
+y : 2
 100 : number
 ]]
 
