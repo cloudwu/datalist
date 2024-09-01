@@ -113,9 +113,9 @@ b :
 	3
 c :
 	---
-	x = 1
+	x : 1
 	---
-	y = 2
+	y : 2
 ]] {
 	a = { 1,2,3 },
 	b = { -1,2,3 },
@@ -131,22 +131,21 @@ hello "world"
 	"newline\n",
 }
 
-
 C [[
 list :
-	1,2
-	3,4
-x = 1 y = 2.0
+	{ 1,2 }
+	{ 3,4 }
+x : 1 y : 2.0
 layer :
-	a = hello
-	b = world
-z = 0x3
-w = {1,2,3}
-map = { x = 1, y =
+	a : hello
+	b : world
+z : 0x3
+w : {1,2,3}
+map : { x : 1, y :
 	{ a , b, c }
 }
 ]] {
-	list = { 1,2,3,4 },
+	list = { {1,2},{3,4} },
 	x = 1,
 	y = 2,
 	z = 3,
@@ -187,22 +186,5 @@ local v = datalist.parse([[ [1,2,3,4] ]], function(v)
 	end
 	return s
 end)
-
-print(v[1])
-
----- userdata
-
-local s = "Hello"
-local ptr, sz = datalist.string2ud(s)
-
-local function close(ptr, sz)
-	print("CLOSE", ptr, sz)
-end
-
-local function userdata()
-	return ptr, sz, close
-end
-
-local v = datalist.parse(userdata)
 
 print(v[1])
