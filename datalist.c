@@ -510,7 +510,21 @@ token_symbol(struct lex_state *LS) {
 
 static inline void
 push_key(lua_State *L, struct lex_state *LS) {
-	lua_pushlstring(L, LS->source + LS->c.from, LS->c.to - LS->c.from);
+	const char * from = LS->source + LS->c.from;
+	size_t sz = LS->c.to - LS->c.from;
+	int v = 0;
+	while (sz != 0) {
+		char c = *from;
+		if (c >= '0' && c <= '9') {
+			v = v * 10 + (c-'0');
+		} else {
+			lua_pushlstring(L, LS->source + LS->c.from, LS->c.to - LS->c.from);
+			return;
+		}
+		++from;
+		--sz;
+	}
+	lua_pushinteger(L, v);
 }
 
 static inline void
