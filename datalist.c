@@ -373,6 +373,7 @@ push_token_string(lua_State *L, const char *ptr, size_t sz) {
 				case 'v':
 					buffer[n] = '\v';
 					break;
+				case '\\':
 				case '\'':
 				case '"':
 				case '\n':
@@ -1063,6 +1064,10 @@ init_lex(lua_State *L, int index, struct lex_state *LS) {
 		break;
 	}
 	LS->position = 0;
+	LS->c.type = TOKEN_NEWLINE;
+	LS->c.from = 0;
+	LS->c.to = 0;
+	LS->n = LS->c;
 	LS->newline = 1;
 	LS->aslist = 0;
 	if (!next_token(LS))
